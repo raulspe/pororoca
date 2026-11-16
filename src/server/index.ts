@@ -4,11 +4,17 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { ClientMsg, ServerMsg } from '../shared/protocol';
+import { HARDCORE_LIVES, HARDCORE_ROUNDS } from '../shared/rules';
 import { GameError, Room } from './room';
 
 const PORT = Number(process.env.PORT ?? 3001);
 const STATIC_DIR = join(process.cwd(), 'dist', 'client');
 const ROOM_TTL_MS = 10 * 60 * 1000; // sala vazia some depois de 10 minutos
+// Vidas e rodadas do Hardcore ainda estão em teste: dá para mudar sem mexer no código.
+const ROOM_OPTIONS = {
+  hardcoreLives: Number(process.env.HARDCORE_VIDAS) || HARDCORE_LIVES,
+  hardcoreRounds: Number(process.env.HARDCORE_RODADAS) || HARDCORE_ROUNDS,
+};
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sem 0/O, 1/I/L
 
 const rooms = new Map<string, Room>();
@@ -42,7 +48,7 @@ function handle(ws: WebSocket, msg: ClientMsg) {
     if (seat) throw new GameError('Você já está em uma sala.');
     let room: Room;
     if (msg.t === 'create') {
-      room = new Room(newCode());
+      room = new Room(newCode(), Math.random, ROOM_OPTIONS);
       rooms.set(room.code, room);
     } else {
       const found = rooms.get(normCode(msg.code));
@@ -77,6 +83,7 @@ function handle(ws: WebSocket, msg: ClientMsg) {
   const me = seat.playerId;
 
   switch (msg.t) {
+    case 'mode': room.setMode(me, msg.mode); break;
     case 'theme': room.setTheme(me, msg.theme); break;
     case 'start': room.start(me); break;
     case 'clue': room.setClue(me, String(msg.cardId), msg.text); break;

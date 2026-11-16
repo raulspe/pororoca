@@ -2,7 +2,7 @@
 
 Jogo cooperativo de navegador: cada pessoa recebe um número secreto, dá uma dica falada dentro de um tema e o grupo coloca todo mundo em ordem, do menor para o maior. Sem cadastro: entra por link ou código, só com um apelido.
 
-Esta é a primeira fatia jogável: **modo Chill online, do criar sala até a virada**.
+Já dá para jogar online os modos **Chill** e **Hardcore**, do criar sala até a virada (e, no Hardcore, até a conquista).
 
 ## Rodar no seu computador
 
@@ -44,9 +44,22 @@ O servidor é a única fonte da verdade: o navegador só envia pedidos (mover ca
 - Mexeu, os oks de todos voltam a zero. Com todos os oks, o host vira as cartas.
 - Virada: "Maré cheia" (tudo em ordem) ou "Maré baixa" (aponta a primeira carta fora de ordem).
 - Recarregar a página devolve o jogador ao lugar; se o host cai, outro assume.
+- **Hardcore:** o host escolhe o modo na sala e a paleta inteira troca. A rodada N dá N cartas por pessoa (mão nova a cada rodada, uma dica por carta), o tema é sempre sorteado e errar a ordem custa uma vida. Quem passa por todas as rodadas ganha a tela de conquista; sem vidas, é fim de jogo.
+
+### Ajustar o Hardcore sem mexer no código
+
+Vidas e rodadas ainda estão em teste. O padrão é 3 vidas e 12 rodadas (`src/shared/rules.ts`), e o servidor aceita outros valores por variável de ambiente:
+
+```bash
+HARDCORE_VIDAS=5 HARDCORE_RODADAS=8 npm start
+```
+
+No PowerShell: `$env:HARDCORE_VIDAS=5; $env:HARDCORE_RODADAS=8; npm start`.
+
+Hoje, errar uma rodada custa a vida e a partida segue para a rodada seguinte (não repete a mesma).
 
 ## O que falta
 
-- Modo Hardcore (mão que cresce, vidas, paleta própria, conquista) e modo Impostor.
+- Modo Impostor.
 - Sons de água e o restante das microinterações do protótipo em vídeo.
 - Publicar em um servidor para jogar pela internet.
