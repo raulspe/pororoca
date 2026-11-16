@@ -1,7 +1,7 @@
 // Uma sala de jogo. O servidor é a única fonte da verdade: o navegador só pede, a sala decide.
 import { randomUUID } from 'node:crypto';
 import type { CardView, Mode, Phase, RoomView, Theme } from '../shared/protocol';
-import { MAX_PLAYERS, MIN_PLAYERS, checkOrder, dealNumbers, deckMaxFor, moveItem, shuffle, type Rng } from '../shared/rules';
+import { HARDCORE_LIVES, HARDCORE_ROUNDS, MAX_PLAYERS, MIN_PLAYERS, checkOrder, dealNumbers, deckMaxFor, moveItem, shuffle, type Rng } from '../shared/rules';
 import { THEMES } from '../shared/themes';
 
 /** Erro de regra, com mensagem pronta para mostrar ao jogador. */
@@ -22,6 +22,11 @@ interface Card {
   heldBy: string | null;
 }
 
+export interface RoomOptions {
+  hardcoreLives: number;
+  hardcoreRounds: number;
+}
+
 const clean = (text: unknown, max: number) => String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
 export class Room {
@@ -33,13 +38,22 @@ export class Room {
   chosenTheme: Theme | null = null;
   theme: Theme | null = null;
   round = 0;
+  deal = 0;
   deckMax = 100;
+  // Hardcore
+  lives = 0;
+  cardsPlayed = 0;
+  outcome: 'won' | 'lost' | null = null;
   line: Card[] = [];
   oks = new Set<string>();
   result: { ok: boolean; firstError: number | null } | null = null;
   lastActive = Date.now();
 
-  constructor(readonly code: string, private rng: Rng = Math.random) {}
+  constructor(
+    readonly code: string,
+    private rng: Rng = Math.random,
+    private opts: RoomOptions = { hardcoreLives: HARDCORE_LIVES, hardcoreRounds: HARDCORE_ROUNDS },
+  ) {}
 
   private player(id: string): Player {
     const p = this.players.find((x) => x.id === id);
@@ -105,6 +119,13 @@ export class Room {
     return !this.players.some((p) => p.connected);
   }
 
+  setMode(by: string, mode: Mode) {
+    this.onlyHost(by);
+    this.inPhase('lobby');
+    if (mode !== 'chill' && mode !== 'hardcore') throw new GameError('Esse modo ainda não está disponível.');
+    this.mode = mode;
+  }
+
   setTheme(by: string, theme: Theme | null) {
     this.onlyHost(by);
     this.inPhase('lobby');
@@ -117,22 +138,49 @@ export class Room {
     this.chosenTheme = t;
   }
 
+  /** Começa uma partida nova a partir do lobby. */
   start(by: string) {
     this.onlyHost(by);
-    if (this.phase === 'playing') throw new GameError('A rodada já começou.');
+    this.inPhase('lobby');
+    this.round = 0;
+    this.lives = this.opts.hardcoreLives;
+    this.cardsPlayed = 0;
+    this.outcome = null;
+    this.dealRound();
+  }
+
+  /** Distribui uma mão nova. No Hardcore, a rodada N dá N cartas por pessoa e o tema é sempre sorteado. */
+  private dealRound() {
     if (this.players.filter((p) => p.connected).length < MIN_PLAYERS) throw new GameError(`Precisa de pelo menos ${MIN_PLAYERS} jogadores.`);
     // Quem caiu fica de fora desta rodada.
     this.players = this.players.filter((p) => p.connected);
-    const cardsPerPlayer = 1; // Chill: uma carta por pessoa. O Hardcore vai mudar isto.
+    const hardcore = this.mode === 'hardcore';
+    const cardsPerPlayer = hardcore ? this.round + 1 : 1;
     this.deckMax = deckMaxFor(this.players.length, cardsPerPlayer);
     const numbers = dealNumbers(this.players.length * cardsPerPlayer, this.deckMax, this.rng);
-    this.theme = this.chosenTheme ?? THEMES[Math.floor(this.rng() * THEMES.length)];
+    this.theme = (!hardcore && this.chosenTheme) || this.randomTheme();
     this.round += 1;
-    const cards: Card[] = this.players.map((p, i) => ({ id: `c${this.round}-${i}`, ownerId: p.id, number: numbers[i], clue: '', heldBy: null }));
+    this.deal += 1;
+    const cards: Card[] = [];
+    this.players.forEach((p, pi) => {
+      for (let k = 0; k < cardsPerPlayer; k++) {
+        const n = pi * cardsPerPlayer + k;
+        cards.push({ id: `c${this.deal}-${n}`, ownerId: p.id, number: numbers[n], clue: '', heldBy: null });
+      }
+    });
     this.line = shuffle(cards, this.rng);
     this.oks.clear();
     this.result = null;
     this.phase = 'playing';
+  }
+
+  /** Sorteia um tema diferente do anterior. */
+  private randomTheme(): Theme {
+    for (let tries = 0; tries < 10; tries++) {
+      const t = THEMES[Math.floor(this.rng() * THEMES.length)];
+      if (t.name !== this.theme?.name) return t;
+    }
+    return THEMES[0];
   }
 
   setClue(by: string, cardId: string, text: string) {
@@ -182,19 +230,31 @@ export class Room {
     if (!this.allOk) throw new GameError('Ainda falta gente dar ok.');
     this.result = checkOrder(this.line.map((c) => c.number));
     for (const c of this.line) c.heldBy = null;
+    if (this.mode === 'hardcore') {
+      this.cardsPlayed += this.line.length;
+      if (!this.result.ok) this.lives -= 1; // não existe errar por pouco
+      if (this.lives <= 0) this.outcome = 'lost';
+      else if (this.round >= this.opts.hardcoreRounds) this.outcome = 'won';
+    }
     this.phase = 'result';
   }
 
+  /** Próxima rodada. No Hardcore, se a partida acabou, vai para a tela final. */
   again(by: string) {
     this.onlyHost(by);
     this.inPhase('result');
-    this.start(by);
+    if (this.mode === 'hardcore' && this.outcome) {
+      this.phase = 'over';
+      return;
+    }
+    this.dealRound();
   }
 
   toLobby(by: string) {
     this.onlyHost(by);
-    this.inPhase('result');
+    if (this.phase !== 'result' && this.phase !== 'over') throw new GameError('Isso não pode ser feito agora.');
     this.phase = 'lobby';
+    this.outcome = null;
     this.line = [];
     this.result = null;
     this.theme = null;
@@ -203,7 +263,7 @@ export class Room {
 
   /** O que este jogador pode ver. Números alheios só aparecem depois da virada. */
   viewFor(id: string): RoomView {
-    const revealed = this.phase === 'result';
+    const revealed = this.phase === 'result' || this.phase === 'over';
     const line: CardView[] = this.line.map((c) => ({
       id: c.id,
       ownerId: c.ownerId,
@@ -220,9 +280,13 @@ export class Room {
       players: this.players.map((p) => ({ id: p.id, name: p.name, connected: p.connected, ok: this.oks.has(p.id) })),
       theme: this.phase === 'lobby' ? this.chosenTheme : this.theme,
       round: this.round,
+      deal: this.deal,
       deckMax: this.deckMax,
       line,
       result: this.result,
+      hardcore: this.mode === 'hardcore'
+        ? { lives: Math.max(0, this.lives), maxLives: this.opts.hardcoreLives, totalRounds: this.opts.hardcoreRounds, cardsPlayed: this.cardsPlayed, outcome: this.outcome }
+        : null,
     };
   }
 }

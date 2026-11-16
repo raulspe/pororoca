@@ -112,3 +112,89 @@ describe('sala', () => {
     expect(room.theme?.name).toBe('Cheiro');
   });
 });
+
+describe('hardcore', () => {
+  function hc(n = 3, opts = { hardcoreLives: 3, hardcoreRounds: 12 }) {
+    const room = new Room('HARD', Math.random, opts);
+    const ps = Array.from({ length: n }, (_, i) => room.addPlayer(`J${i + 1}`));
+    room.setMode(ps[0].id, 'hardcore');
+    return { room, ps, host: ps[0] };
+  }
+  const jogar = (room: Room, ps: { id: string }[], certo: boolean) => {
+    ordenar(room, ps[0].id);
+    if (!certo) room.move(ps[0].id, room.line[0].id, room.line.length - 1);
+    ps.forEach((p) => room.setOk(p.id, true));
+    room.reveal(ps[0].id);
+  };
+
+  it('só o host troca o modo, e o Impostor ainda não existe', () => {
+    const { room, ps, host } = hc(2);
+    expect(() => room.setMode(ps[1].id, 'chill')).toThrow(GameError);
+    expect(() => room.setMode(host.id, 'impostor')).toThrow(GameError);
+    expect(room.mode).toBe('hardcore');
+  });
+
+  it('a rodada N dá N cartas por pessoa, com mão nova e tema sempre sorteado', () => {
+    const { room, ps, host } = hc(3);
+    room.setTheme(host.id, { name: 'Escolhido', low: 'a', high: 'b' });
+    room.start(host.id);
+    expect(room.theme?.name).not.toBe('Escolhido');
+    expect(room.line).toHaveLength(3);
+    const primeira = room.line.map((c) => c.id);
+    const tema1 = room.theme?.name;
+    jogar(room, ps, true);
+    room.again(host.id);
+    expect(room.round).toBe(2);
+    expect(room.line).toHaveLength(6);
+    expect(room.theme?.name).not.toBe(tema1);
+    expect(room.line.some((c) => primeira.includes(c.id))).toBe(false);
+    for (const p of ps) {
+      const minhas = room.viewFor(p.id).line.filter((c) => c.number !== null);
+      expect(minhas).toHaveLength(2);
+      expect(minhas.every((c) => c.ownerId === p.id)).toBe(true);
+    }
+    expect(new Set(room.line.map((c) => c.number)).size).toBe(6);
+  });
+
+  it('errar custa uma vida e a partida segue; sem vidas, acabou', () => {
+    const { room, ps, host } = hc(2, { hardcoreLives: 2, hardcoreRounds: 12 });
+    room.start(host.id);
+    jogar(room, ps, false);
+    expect(room.viewFor(host.id).hardcore).toMatchObject({ lives: 1, outcome: null });
+    room.again(host.id);
+    expect(room.round).toBe(2); // a rodada avança mesmo com erro
+    jogar(room, ps, false);
+    expect(room.viewFor(host.id).hardcore).toMatchObject({ lives: 0, outcome: 'lost', cardsPlayed: 6 });
+    room.again(host.id);
+    expect(room.phase).toBe('over');
+    room.toLobby(host.id);
+    expect(room.phase).toBe('lobby');
+  });
+
+  it('quem passa por todas as rodadas com vida sobrando vence', () => {
+    const { room, ps, host } = hc(2, { hardcoreLives: 3, hardcoreRounds: 4 });
+    room.start(host.id);
+    for (let r = 1; r <= 4; r++) {
+      expect(room.line).toHaveLength(2 * r);
+      jogar(room, ps, r !== 2); // erra só a rodada 2
+      if (r < 4) room.again(host.id);
+    }
+    const v = room.viewFor(host.id).hardcore!;
+    expect(v).toMatchObject({ lives: 2, outcome: 'won', cardsPlayed: 20, totalRounds: 4 });
+    room.again(host.id);
+    expect(room.phase).toBe('over');
+    // uma partida nova começa do zero
+    room.toLobby(host.id);
+    room.start(host.id);
+    expect(room.round).toBe(1);
+    expect(room.viewFor(host.id).hardcore).toMatchObject({ lives: 3, outcome: null, cardsPlayed: 0 });
+  });
+
+  it('o Chill não usa vidas', () => {
+    const room = new Room('CHIL');
+    const a = room.addPlayer('Ana');
+    room.addPlayer('Beto');
+    room.start(a.id);
+    expect(room.viewFor(a.id).hardcore).toBeNull();
+  });
+});

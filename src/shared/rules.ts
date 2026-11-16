@@ -7,6 +7,10 @@ export const DECK_BIG = 1000;
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 8;
 
+/** Hardcore: valores iniciais, ainda em teste. O servidor aceita outros por variável de ambiente. */
+export const HARDCORE_LIVES = 3;
+export const HARDCORE_ROUNDS = 12;
+
 /** O baralho vai de 1 a 100; cresce para 1 a 1000 quando jogadores x cartas passa de 100. */
 export function deckMaxFor(players: number, cardsPerPlayer: number): number {
   return players * cardsPerPlayer > DECK_SMALL ? DECK_BIG : DECK_SMALL;
